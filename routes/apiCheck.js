@@ -49,3 +49,64 @@ router.post("/check", async (req, res) => {
 });
 
 module.exports = router;
+
+// POST /api/run-tests
+// Body: { tests: [{ url, method?, expectedStatus?, headers?, body? }], timeoutMs?, concurrency? }
+router.post('/run-tests', async (req, res) => {
+    const { tests, timeoutMs = 8000, concurrency = 5 } = req.body || {};
+
+    if (!Array.isArray(tests) || tests.length === 0) {
+        return res.status(400).json({ message: 'Bad Request', error: 'Request body must include a non-empty "tests" array' });
+    }
+
+    // Basic URL validation helper
+    const isValidUrl = (u) => typeof u === 'string' && /^(https?:)\/\//i.test(u);
+
+    for (let i = 0; i < tests.length; i++) {
+        if (!tests[i] || !isValidUrl(tests[i].url)) {
+            return res.status(400).json({ message: 'Bad Request', error: `Invalid or missing url at tests[${i}]` });
+        }
+    }
+
+    const results = [];
+    let idx = 0;
+
+    const worker = async () => {
+        while (true) {
+            const i = idx++;
+            if (i >= tests.length) return;
+            const t = tests[i];
+            const method = (t.method || 'GET').toUpperCase();
+            const expected = typeof t.expectedStatus === 'number' ? t.expectedStatus : null;
+
+            const start = Date.now();
+            try {
+                const response = await axios.request({
+                    url: t.url,
+                    method,
+                    headers: t.headers,
+                    data: t.body,
+                    timeout: timeoutMs,
+                    validateStatus: () => true // we want to capture non-2xx as responses, not throw
+                });
+                const duration = Date.now() - start;
+                const actualStatus = response.status;
+                const ok = expected === null ? (actualStatus >= 200 && actualStatus < 300) : actualStatus === expected;
+                results.push({ url: t.url, method, expectedStatus: expected, actualStatus, timeMs: duration, ok, error: null });
+            } catch (err) {
+                const duration = Date.now() - start;
+                // network / timeout errors
+                const errMsg = err && err.message ? err.message : String(err);
+                results.push({ url: t.url, method, expectedStatus: expected, actualStatus: null, timeMs: duration, ok: false, error: errMsg });
+            }
+        }
+    };
+
+    const workers = [];
+    const workerCount = Math.max(1, Math.min(concurrency, tests.length));
+    for (let w = 0; w < workerCount; w++) workers.push(worker());
+    await Promise.all(workers);
+
+    const summary = { total: results.length, passed: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length };
+    return res.status(200).json({ results, summary });
+});
