@@ -1,7 +1,9 @@
 const express = require("express");
 const axios = require("axios");
+const Ajv = require('ajv');
 
 const router = express.Router();
+const ajv = new Ajv({ allErrors: true, coerceTypes: true });
 
 router.post("/check", async (req, res) => {
     // Debug log: show incoming body
@@ -53,22 +55,43 @@ module.exports = router;
 // POST /api/run-tests
 // Body: { tests: [{ url, method?, expectedStatus?, headers?, body? }], timeoutMs?, concurrency? }
 router.post('/run-tests', async (req, res) => {
-    const { tests, timeoutMs = 8000, concurrency = 5 } = req.body || {};
+    const body = req.body || {};
+    const schema = {
+        type: 'object',
+        properties: {
+            tests: {
+                type: 'array',
+                minItems: 1,
+                items: {
+                    type: 'object',
+                    properties: {
+                        url: { type: 'string', pattern: '^(https?:)\\/\\/' },
+                        method: { type: 'string' },
+                        expectedStatus: { type: 'integer' },
+                        headers: { type: 'object' },
+                        body: {}
+                    },
+                    required: ['url'],
+                    additionalProperties: false
+                }
+            },
+            timeoutMs: { type: 'integer', minimum: 100 },
+            concurrency: { type: 'integer', minimum: 1 }
+        },
+        required: ['tests'],
+        additionalProperties: false
+    };
 
-    if (!Array.isArray(tests) || tests.length === 0) {
-        return res.status(400).json({ message: 'Bad Request', error: 'Request body must include a non-empty "tests" array' });
+    const validate = ajv.compile(schema);
+    const valid = validate(body);
+    if (!valid) {
+        return res.status(400).json({ message: 'Bad Request', errors: validate.errors });
     }
 
-    // Basic URL validation helper
-    const isValidUrl = (u) => typeof u === 'string' && /^(https?:)\/\//i.test(u);
+    const { tests, timeoutMs = 8000, concurrency = 5 } = body;
 
-    for (let i = 0; i < tests.length; i++) {
-        if (!tests[i] || !isValidUrl(tests[i].url)) {
-            return res.status(400).json({ message: 'Bad Request', error: `Invalid or missing url at tests[${i}]` });
-        }
-    }
-
-    const results = [];
+    // Prepare results array so we preserve input order
+    const results = new Array(tests.length);
     let idx = 0;
 
     const worker = async () => {
@@ -87,17 +110,16 @@ router.post('/run-tests', async (req, res) => {
                     headers: t.headers,
                     data: t.body,
                     timeout: timeoutMs,
-                    validateStatus: () => true // we want to capture non-2xx as responses, not throw
+                    validateStatus: () => true // capture non-2xx responses as normal responses
                 });
                 const duration = Date.now() - start;
                 const actualStatus = response.status;
                 const ok = expected === null ? (actualStatus >= 200 && actualStatus < 300) : actualStatus === expected;
-                results.push({ url: t.url, method, expectedStatus: expected, actualStatus, timeMs: duration, ok, error: null });
+                results[i] = { url: t.url, method, expectedStatus: expected, actualStatus, timeMs: duration, ok, error: null };
             } catch (err) {
                 const duration = Date.now() - start;
-                // network / timeout errors
                 const errMsg = err && err.message ? err.message : String(err);
-                results.push({ url: t.url, method, expectedStatus: expected, actualStatus: null, timeMs: duration, ok: false, error: errMsg });
+                results[i] = { url: t.url, method, expectedStatus: expected, actualStatus: null, timeMs: duration, ok: false, error: errMsg };
             }
         }
     };
@@ -107,6 +129,6 @@ router.post('/run-tests', async (req, res) => {
     for (let w = 0; w < workerCount; w++) workers.push(worker());
     await Promise.all(workers);
 
-    const summary = { total: results.length, passed: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length };
+    const summary = { total: results.length, passed: results.filter(r => r && r.ok).length, failed: results.filter(r => r && !r.ok).length };
     return res.status(200).json({ results, summary });
 });
