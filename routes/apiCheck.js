@@ -85,50 +85,38 @@ router.post('/run-tests', async (req, res) => {
     const validate = ajv.compile(schema);
     const valid = validate(body);
     if (!valid) {
-        return res.status(400).json({ message: 'Bad Request', errors: validate.errors });
+        // Format AJV errors into friendlier messages for the frontend
+        const errors = (validate.errors || []).map(err => {
+            // err.instancePath is a JSON Pointer like '/tests/0/url'
+            const path = err.instancePath ? err.instancePath.replace(/\//g, '.').replace(/^\./, '') : '';
+            const field = path || (err.params && err.params.missingProperty) ? (path ? path : err.params.missingProperty) : '';
+            const message = err.message || '';
+            return { field, message, keyword: err.keyword };
+        });
+        return res.status(400).json({ message: 'Bad Request', errors });
     }
 
+    // Switch to async job-based processing: create a job and return its id
     const { tests, timeoutMs = 8000, concurrency = 5 } = body;
+    const jobQueue = require('../lib/jobQueue');
+    const jobId = jobQueue.createJob(tests, { timeoutMs, concurrency });
+    return res.status(202).json({ jobId, message: 'Job accepted' });
+});
 
-    // Prepare results array so we preserve input order
-    const results = new Array(tests.length);
-    let idx = 0;
+// GET /api/jobs/:id - check job status
+router.get('/jobs/:id', (req, res) => {
+    const { id } = req.params;
+    const jobQueue = require('../lib/jobQueue');
+    const job = jobQueue.getJob(id);
+    if (!job) return res.status(404).json({ message: 'Not Found' });
+    return res.status(200).json(job);
+});
 
-    const worker = async () => {
-        while (true) {
-            const i = idx++;
-            if (i >= tests.length) return;
-            const t = tests[i];
-            const method = (t.method || 'GET').toUpperCase();
-            const expected = typeof t.expectedStatus === 'number' ? t.expectedStatus : null;
-
-            const start = Date.now();
-            try {
-                const response = await axios.request({
-                    url: t.url,
-                    method,
-                    headers: t.headers,
-                    data: t.body,
-                    timeout: timeoutMs,
-                    validateStatus: () => true // capture non-2xx responses as normal responses
-                });
-                const duration = Date.now() - start;
-                const actualStatus = response.status;
-                const ok = expected === null ? (actualStatus >= 200 && actualStatus < 300) : actualStatus === expected;
-                results[i] = { url: t.url, method, expectedStatus: expected, actualStatus, timeMs: duration, ok, error: null };
-            } catch (err) {
-                const duration = Date.now() - start;
-                const errMsg = err && err.message ? err.message : String(err);
-                results[i] = { url: t.url, method, expectedStatus: expected, actualStatus: null, timeMs: duration, ok: false, error: errMsg };
-            }
-        }
-    };
-
-    const workers = [];
-    const workerCount = Math.max(1, Math.min(concurrency, tests.length));
-    for (let w = 0; w < workerCount; w++) workers.push(worker());
-    await Promise.all(workers);
-
-    const summary = { total: results.length, passed: results.filter(r => r && r.ok).length, failed: results.filter(r => r && !r.ok).length };
-    return res.status(200).json({ results, summary });
+// GET /reports/:id - fetch saved report JSON
+router.get('/reports/:id', (req, res) => {
+    const { id } = req.params;
+    const jobQueue = require('../lib/jobQueue');
+    const report = jobQueue.getReport(id);
+    if (!report) return res.status(404).json({ message: 'Not Found' });
+    return res.status(200).json(report);
 });
