@@ -1,0 +1,20 @@
+{
+  "id": "5f964163-96fb-45dd-a4fb-0f6f4c796d09",
+  "createdAt": 1764014503219,
+  "results": [
+    {
+      "url": "http://127.0.0.1:8000",
+      "method": "GET",
+      "expectedStatus": null,
+      "actualStatus": null,
+      "timeMs": 9,
+      "ok": false,
+      "error": "connect ECONNREFUSED 127.0.0.1:8000"
+    }
+  ],
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1
+  }
+}

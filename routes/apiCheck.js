@@ -1,6 +1,7 @@
 const express = require("express");
 const axios = require("axios");
 const Ajv = require('ajv');
+const ssrf = require('../lib/ssrf');
 
 const router = express.Router();
 const ajv = new Ajv({ allErrors: true, coerceTypes: true });
@@ -50,7 +51,7 @@ router.post("/check", async (req, res) => {
     }
 });
 
-module.exports = router;
+// (export at end after all routes)
 
 // POST /api/run-tests
 // Body: { tests: [{ url, method?, expectedStatus?, headers?, body? }], timeoutMs?, concurrency? }
@@ -96,8 +97,20 @@ router.post('/run-tests', async (req, res) => {
         return res.status(400).json({ message: 'Bad Request', errors });
     }
 
-    // Switch to async job-based processing: create a job and return its id
+    // Switch to async job-based processing: validate against SSRF rules, create a job and return its id
     const { tests, timeoutMs = 8000, concurrency = 5 } = body;
+    // SSRF protection: reject tests that point to localhost or private IP ranges
+    try {
+        const ssrfErrors = await ssrf.validateTestsArePublic(tests);
+        console.log('ssrf.validateTestsArePublic ->', ssrfErrors);
+        if (ssrfErrors && ssrfErrors.length) {
+            return res.status(400).json({ message: 'Bad Request - SSRF protection', errors: ssrfErrors });
+        }
+    } catch (err) {
+        console.error('SSRF validation failed', err);
+        return res.status(500).json({ message: 'Internal Server Error' });
+    }
+
     const jobQueue = require('../lib/jobQueue');
     const jobId = jobQueue.createJob(tests, { timeoutMs, concurrency });
     return res.status(202).json({ jobId, message: 'Job accepted' });
@@ -120,3 +133,5 @@ router.get('/reports/:id', (req, res) => {
     if (!report) return res.status(404).json({ message: 'Not Found' });
     return res.status(200).json(report);
 });
+
+module.exports = router;
