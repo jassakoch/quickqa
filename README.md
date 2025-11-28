@@ -2,6 +2,8 @@
 
 Small API checker service — POST a URL and the service will try to fetch it and return the upstream status and timing.
 
+![CI](https://github.com/jassakoch/quickqa/actions/workflows/nodejs-test.yml/badge.svg)
+
 ## Quick start
 
 Install dependencies:
@@ -56,6 +58,10 @@ Responses:
 
 - `.env` is ignored by `.gitignore`. Use `.env.example` to document required vars.
 - Upstream requests use an 8000 ms timeout to avoid long hangs.
+
+Development notes
+
+- This project received help from GitHub Copilot for some code and automation; check the test and CI files when reviewing changes.
 
 ## License
 
