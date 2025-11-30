@@ -2,6 +2,7 @@ const express = require("express");
 const axios = require("axios");
 const Ajv = require('ajv');
 const ssrf = require('../lib/ssrf');
+const allowlist = require('../lib/allowlist');
 
 const router = express.Router();
 const ajv = new Ajv({ allErrors: true, coerceTypes: true });
@@ -97,8 +98,29 @@ router.post('/run-tests', async (req, res) => {
         return res.status(400).json({ message: 'Bad Request', errors });
     }
 
-    // Switch to async job-based processing: validate against SSRF rules, create a job and return its id
+    // Switch to async job-based processing: validate allowlist, then SSRF rules, create a job and return its id
     const { tests, timeoutMs = 8000, concurrency = 5 } = body;
+
+    // Allowlist check (if configured). If ALLOWLIST_DOMAINS is set, only requests
+    // to allowed domains will be accepted. Empty allowlist means nothing allowed.
+    try {
+        const patterns = allowlist.DEFAULT.patterns;
+        if (patterns && patterns.length) {
+            const blocked = [];
+            for (let i = 0; i < tests.length; i++) {
+                const t = tests[i];
+                if (!allowlist.DEFAULT.allows(t.url)) {
+                    blocked.push({ index: i, url: t.url, reason: 'Not in allowlist' });
+                }
+            }
+            if (blocked.length) {
+                return res.status(403).json({ message: 'Forbidden - allowlist', errors: blocked });
+            }
+        }
+    } catch (err) {
+        console.error('Allowlist validation failed', err);
+        return res.status(500).json({ message: 'Internal Server Error' });
+    }
     // SSRF protection: reject tests that point to localhost or private IP ranges
     try {
         const ssrfErrors = await ssrf.validateTestsArePublic(tests);

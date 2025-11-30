@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const rateLimit = require('express-rate-limit');
 const { requireApiKey } = require('./lib/auth');
+const quotas = require('./lib/quotas');
 
 const app = express();
 const PORT = process.env.PORT || 5050;
@@ -20,6 +21,27 @@ app.use('/api', apiLimiter);
 // require API key for mutating endpoints (POST/DELETE/PATCH) under /api
 app.use('/api', (req, res, next) => {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return requireApiKey(req, res, next);
+  return next();
+});
+
+// quotas for mutating endpoints: per-API-key or per-IP fixed-window counters
+app.use('/api', (req, res, next) => {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
+  try {
+    const apiKey = req.header('x-api-key') || undefined;
+    const ip = req.ip;
+    const result = quotas.hit(apiKey, ip);
+    // set simple headers to help clients
+    res.setHeader('X-RateLimit-Remaining', String(result.remaining));
+    res.setHeader('X-RateLimit-Reset', String(Math.ceil(result.resetMs / 1000)));
+    if (!result.allowed) {
+      return res.status(429).json({ message: 'Too Many Requests', remaining: result.remaining, resetMs: result.resetMs });
+    }
+  } catch (e) {
+    // on quota errors, fail closed (deny) to be conservative
+    console.error('Quota check failed', e);
+    return res.status(429).json({ message: 'Too Many Requests' });
+  }
   return next();
 });
 
