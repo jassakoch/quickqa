@@ -71,4 +71,10 @@ app.use((err, req, res, next) => {
 });
 
 // Start server
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+if (require.main === module) {
+  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+} else {
+  // when required by tests, export the app without starting the server
+  module.exports = app;
+}
+
