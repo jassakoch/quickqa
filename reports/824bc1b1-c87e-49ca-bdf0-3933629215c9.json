@@ -1,0 +1,20 @@
+{
+  "id": "824bc1b1-c87e-49ca-bdf0-3933629215c9",
+  "createdAt": 1764898910213,
+  "results": [
+    {
+      "url": "https://example.com/",
+      "method": "GET",
+      "expectedStatus": null,
+      "actualStatus": null,
+      "timeMs": 26,
+      "ok": false,
+      "error": "getaddrinfo ENOTFOUND example.com"
+    }
+  ],
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1
+  }
+}
