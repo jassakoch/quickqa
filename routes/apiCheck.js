@@ -3,6 +3,7 @@ const axios = require("axios");
 const Ajv = require('ajv');
 const ssrf = require('../lib/ssrf');
 const allowlist = require('../lib/allowlist');
+const openapiValidator = require('../lib/openapiValidator');
 
 const router = express.Router();
 const ajv = new Ajv({ allErrors: true, coerceTypes: true });
@@ -154,6 +155,17 @@ router.get('/reports/:id', (req, res) => {
     const report = jobQueue.getReport(id);
     if (!report) return res.status(404).json({ message: 'Not Found' });
     return res.status(200).json(report);
+});
+
+// POST /api/validate-spec - validate an OpenAPI spec
+// Body: { spec: {...} } where spec is a parsed OpenAPI/Swagger object
+router.post('/validate-spec', (req, res) => {
+    const { spec } = req.body || {};
+    if (!spec || typeof spec !== 'object') {
+        return res.status(400).json({ message: 'Bad Request', detail: 'Body must include a "spec" object' });
+    }
+    const result = openapiValidator.validateSpec(spec);
+    return res.status(200).json(result);
 });
 
 module.exports = router;
